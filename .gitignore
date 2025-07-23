@@ -1,0 +1,14 @@
+*.csv
+*.json
+*.log
+*.txt
+*.env
+*.sh
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+cookies/
+API_data/
+
