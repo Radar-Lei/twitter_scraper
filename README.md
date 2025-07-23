@@ -16,7 +16,23 @@
 首先安装所需的Python包：
 
 ```bash
-pip install -r Scweet/requirements.txt
+git clone 
+```
+
+```bash
+pip install -r requirements.txt
+```
+
+```bash
+pip install zendriver
+```
+
+```bash
+conda install typing_extensions  
+```
+
+```bash
+pip install nodriver
 ```
 
 ## 使用方法
