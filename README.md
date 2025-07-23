@@ -16,7 +16,7 @@
 首先安装所需的Python包：
 
 ```bash
-git clone 
+git clone https://github.com/Radar-Lei/Scweet.git
 ```
 
 ```bash
