@@ -1065,6 +1065,404 @@ class Scweet:
     async def __aexit__(self, exc_type, exc, tb):
         await self.close()
 
+    def scrape_cities(self, **scrape_kwargs):
+        """
+        Synchronously execute the asynchronous scrape_cities method.
+        Users can call this method without handling asyncio themselves.
+        """
+        return asyncio.run(self.ascrape_cities(**scrape_kwargs))
+
+    async def ascrape_cities(
+            self,
+            cities_config: dict,
+            words: Union[str, list] = None,
+            to_account: str = None,
+            from_account: str = None,
+            mention_account: str = None,
+            lang: str = None,
+            limit: float = float("inf"),
+            display_type: str = "Top",
+            resume: bool = False,
+            hashtag: str = None,
+            save_dir: str = "outputs",
+            filter_replies: bool = False,
+            proximity: bool = False,
+            minreplies=None,
+            minlikes=None,
+            minretweets=None
+    ):
+        """
+        Scrape tweets for multiple cities concurrently without time-based splitting.
+        Each city gets its own tab and saves to a separate CSV file.
+        """
+        if not self.driver:
+            await self.init_nodriver()
+
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+        # Login once for all cities
+        main_tab, logged_in, reason, new_cookies = await self.login()
+        if not logged_in:
+            logging.info(f"Couldn't login due to {reason}")
+            return {}
+
+        # Prepare tasks for each city
+        city_tasks = []
+        for city_key, city_config in cities_config.items():
+            task = asyncio.create_task(
+                self.scrape_single_city(
+                    city_key=city_key,
+                    city_config=city_config,
+                    words=words,
+                    to_account=to_account,
+                    from_account=from_account,
+                    mention_account=mention_account,
+                    lang=lang,
+                    limit=limit,
+                    display_type=display_type,
+                    resume=resume,
+                    hashtag=hashtag,
+                    save_dir=save_dir,
+                    filter_replies=filter_replies,
+                    proximity=proximity,
+                    minreplies=minreplies,
+                    minlikes=minlikes,
+                    minretweets=minretweets
+                )
+            )
+            city_tasks.append(task)
+
+        # Execute all city scraping tasks concurrently
+        logging.info(f"Starting concurrent scraping for {len(cities_config)} cities")
+        results = await asyncio.gather(*city_tasks, return_exceptions=True)
+
+        # Process results
+        all_results = {}
+        for i, (city_key, result) in enumerate(zip(cities_config.keys(), results)):
+            if isinstance(result, Exception):
+                logging.error(f"Error scraping {city_key}: {result}")
+                all_results[city_key] = {}
+            else:
+                all_results[city_key] = result
+                logging.info(f"Completed scraping for {city_key}: {len(result)} tweets")
+
+        # Cancel any lingering tasks before shutting down
+        pending_tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for task in pending_tasks:
+            task.cancel()
+        await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+        await self.close()
+        return all_results
+
+    async def scrape_single_city(
+            self,
+            city_key: str,
+            city_config: dict,
+            words: Union[str, list] = None,
+            to_account: str = None,
+            from_account: str = None,
+            mention_account: str = None,
+            lang: str = None,
+            limit: float = float("inf"),
+            display_type: str = "Top",
+            resume: bool = False,
+            hashtag: str = None,
+            save_dir: str = "outputs",
+            filter_replies: bool = False,
+            proximity: bool = False,
+            minreplies=None,
+            minlikes=None,
+            minretweets=None
+    ):
+        """
+        Scrape tweets for a single city without time-based splitting.
+        """
+        logging.info(f"Starting scraping for city: {city_key}")
+        
+        # Use city's metro keywords if no specific words provided
+        if not words:
+            words = city_config.get('metro_keywords', [])
+        
+        # Use city's geocode if available
+        geocode = city_config.get('geocode')
+        
+        # Build CSV filename for this city
+        csv_filename = f"{save_dir}/{city_key}_metro_tweets.csv"
+        
+        # Get existing tweet IDs for resume functionality
+        existing_tweet_ids = set()
+        if resume and os.path.exists(csv_filename):
+            existing_tweet_ids = self.get_existing_tweet_ids(csv_filename)
+            logging.info(f"[{city_key}] Resume mode: found {len(existing_tweet_ids)} existing tweets")
+
+        # Prepare CSV header
+        header = [
+            "tweetId", "UserScreenName", "UserName", "Timestamp", "Text",
+            "Embedded_text", "Emojis", "Comments", "Likes",
+            "Retweets", "Image link", "Tweet URL"
+        ]
+
+        # Build search URL without time restrictions
+        url = self.build_search_url_no_time(
+            lang=lang,
+            display_type=display_type,
+            words=words,
+            to_account=to_account,
+            from_account=from_account,
+            mention_account=mention_account,
+            hashtag=hashtag,
+            filter_replies=filter_replies,
+            proximity=proximity,
+            geocode=geocode,
+            minreplies=minreplies,
+            minlikes=minlikes,
+            minretweets=minretweets
+        )
+
+        logging.info(f"[{city_key}] Search URL: {url}")
+
+        # Determine write mode for CSV
+        write_mode = "a" if (resume and os.path.exists(csv_filename)) else "w"
+        total_tweets = 0
+        all_data = {}
+
+        # Open CSV file and start scraping
+        with open(csv_filename, write_mode, newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if write_mode == "w":
+                writer.writerow(header)
+
+            # Fetch tweets for this city
+            result_dict = await self.fetch_tweets_single_city(
+                url=url, 
+                city_key=city_key, 
+                limit=limit, 
+                existing_tweet_ids=existing_tweet_ids
+            )
+
+            # Write tweets to CSV
+            for tweet_id, tweet_data in result_dict.items():
+                if tweet_id in existing_tweet_ids:
+                    continue  # Skip already existing tweets
+                
+                row = [
+                    tweet_id,
+                    tweet_data.get("handle", ""),
+                    tweet_data.get("username", ""),
+                    tweet_data.get("postdate", ""),
+                    tweet_data.get("text", ""),
+                    tweet_data.get("embedded", ""),
+                    tweet_data.get("emojis", ""),
+                    tweet_data.get("reply_cnt", "0"),
+                    tweet_data.get("like_cnt", "0"),
+                    tweet_data.get("retweet_cnt", "0"),
+                    " ".join(tweet_data.get("image_links", [])),
+                    tweet_data.get("tweet_url", ""),
+                ]
+                writer.writerow(row)
+                total_tweets += 1
+
+                if total_tweets >= limit:
+                    logging.info(f"[{city_key}] Reached limit of {limit} tweets")
+                    break
+
+            all_data.update(result_dict)
+
+        logging.info(f"[{city_key}] Scraping completed. Total new tweets: {total_tweets}")
+        return all_data
+
+    def get_existing_tweet_ids(self, csv_path):
+        """
+        Read existing tweet IDs from CSV file for resume functionality.
+        Returns a set of tweet IDs that already exist.
+        """
+        existing_ids = set()
+        try:
+            with open(csv_path, "r", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                # Skip header
+                header = next(reader, None)
+                if not header or "tweetId" not in header:
+                    return existing_ids
+                
+                tweet_id_idx = header.index("tweetId")
+                
+                # Read existing tweet IDs
+                for row in reader:
+                    if len(row) > tweet_id_idx and row[tweet_id_idx].strip():
+                        existing_ids.add(row[tweet_id_idx].strip())
+        except Exception as e:
+            logging.warning(f"Could not read existing tweet IDs: {e}")
+            
+        return existing_ids
+
+    async def fetch_tweets_single_city(self, url, city_key, limit, existing_tweet_ids):
+        """
+        Fetch tweets for a single city using one tab.
+        """
+        tab = await self.driver.get(url, new_tab=True)
+        if await check_element_if_exists_by_text(tab, "Retry"):
+            retry = await tab.find('Retry')
+            await retry.click()
+            await tab.sleep(3)
+
+        await tab.scroll_down(self.scroll_ratio//2)
+        await tab.sleep(2)
+
+        num_scrolls = 0
+        all_posts_data = {}
+        last_len = 0
+        consecutive_no_new = 0
+        max_consecutive_no_new = 10  # Stop if no new tweets for 10 consecutive scrolls
+
+        while True:
+            await tab.activate()
+            await tab.scroll_down(self.scroll_ratio)
+            await tab.sleep(0.5)
+            html_el = await tab.get_content()
+            
+            # Process HTML and extract tweets
+            await self.aget_data_single_city(html_el, city_key, all_posts_data, existing_tweet_ids)
+            num_scrolls += 1
+
+            if await check_element_if_exists_by_text(tab, "Something went wrong. Try reloading."):
+                logging.info(f"[{city_key}] Something went wrong (rate limit)")
+                break
+            elif num_scrolls % 5 == 0:
+                current_len = len(all_posts_data)
+                if current_len == last_len:
+                    consecutive_no_new += 1
+                    logging.info(f"[{city_key}] No new tweets found in scroll {num_scrolls} (consecutive: {consecutive_no_new})")
+                    if consecutive_no_new >= max_consecutive_no_new:
+                        logging.info(f"[{city_key}] No new tweets for {max_consecutive_no_new} consecutive checks, stopping")
+                        break
+                else:
+                    consecutive_no_new = 0
+                    logging.info(f"[{city_key}] Found {current_len} tweets so far (scroll {num_scrolls})")
+                
+                last_len = current_len
+            elif len(all_posts_data) >= limit:
+                logging.info(f"[{city_key}] Reached desired tweets count: {limit}")
+                break
+
+        await tab.close()
+        logging.info(f"[{city_key}] Scrolling ended after {num_scrolls} scrolls")
+        logging.info(f"[{city_key}] {len(all_posts_data)} unique tweets found")
+        
+        return all_posts_data
+
+    async def aget_data_single_city(self, html_content, city_key, all_posts_data, existing_tweet_ids):
+        """
+        Extract tweet data for a single city and update all_posts_data.
+        """
+        soup = BeautifulSoup(html_content, 'html.parser')
+        posts = soup.select('article[data-testid=tweet]')
+        new_tweets_count = 0
+        
+        for post_soup in posts:
+            data = await self.get_data(post_soup)
+            if data:
+                tweet_id = data['tweet_url'].split("/")[-1] if data['tweet_url'] else ""
+                if tweet_id and tweet_id not in all_posts_data and tweet_id not in existing_tweet_ids:
+                    all_posts_data[tweet_id] = data
+                    new_tweets_count += 1
+        
+        if new_tweets_count > 0:
+            logging.info(f"[{city_key}] Extracted {new_tweets_count} new tweets (total: {len(all_posts_data)})")
+        
+        return all_posts_data
+
+    def build_search_url_no_time(self,
+                                 lang: str = None,
+                                 display_type: str = "Top",
+                                 words: Union[str, list] = None,
+                                 to_account: str = None,
+                                 from_account: str = None,
+                                 mention_account: str = None,
+                                 hashtag: str = None,
+                                 filter_replies: bool = False,
+                                 proximity: bool = False,
+                                 geocode: str = None,
+                                 minreplies: int = None,
+                                 minlikes: int = None,
+                                 minretweets: int = None
+                                 ) -> str:
+        """
+        Build search URL without time restrictions.
+        """
+        display_type_allowed = {"Top", "Recent", "latest", "image"}
+        if display_type not in display_type_allowed:
+            raise ValueError(f"display_type must be one of {display_type_allowed}")
+
+        # Prepare account/hashtag strings
+        from_str = f"(from%3A{from_account})%20" if from_account else ""
+        to_str = f"(to%3A{to_account})%20" if to_account else ""
+        mention_str = f"(%40{mention_account})%20" if mention_account else ""
+        hashtag_str = f"(%23{hashtag})%20" if hashtag else ""
+
+        # Prepare words string
+        if words:
+            if isinstance(words, list) and len(words) > 1:
+                # e.g. (python OR selenium)
+                words_str = "(" + "%20OR%20".join(w.strip() for w in words) + ")%20"
+            else:
+                # single word or single-element list
+                if isinstance(words, list):
+                    single_word = words[0]
+                else:
+                    single_word = words
+                words_str = f"({single_word})%20"
+        else:
+            words_str = ""
+
+        # Language
+        lang_str = f"lang%3A{lang}" if lang else ""
+
+        # Display type -> &f=live or &f=image, etc.
+        if display_type.lower() == "latest":
+            display_type_str = "&f=live"
+        elif display_type.lower() == "image":
+            display_type_str = "&f=image"
+        else:
+            display_type_str = ""
+
+        # Filter replies
+        filter_replies_str = "%20-filter%3Areplies" if filter_replies else ""
+
+        # Proximity
+        proximity_str = "&lf=on" if proximity else ""
+
+        # geocode
+        geocode_str = f"%20geocode%3A{geocode}" if geocode else ""
+
+        # min number of replies, likes, retweets
+        minreplies_str = f"%20min_replies%3A{minreplies}" if minreplies is not None else ""
+        minlikes_str = f"%20min_faves%3A{minlikes}" if minlikes is not None else ""
+        minretweets_str = f"%20min_retweets%3A{minretweets}" if minretweets is not None else ""
+
+        # Build final URL without time restrictions
+        path = (
+                "https://x.com/search?q="
+                + words_str
+                + from_str
+                + to_str
+                + mention_str
+                + hashtag_str
+                + lang_str
+                + filter_replies_str
+                + geocode_str
+                + minreplies_str
+                + minlikes_str
+                + minretweets_str
+                + "&src=typed_query"
+                + display_type_str
+                + proximity_str
+        )
+
+        return path
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Scrape tweets.')
