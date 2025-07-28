@@ -58,7 +58,7 @@ disable_images = True # disable loading images while fetching
 env_path = '.env' # .env path where twitter account credentials are
 n_splits = 42 # set the number of splits that you want to perform on the date interval (the bigger the interval and the splits, the bigger the scraped tweets)
 concurrency = 2 # tweets and profiles fetching run in parallel (on multiple browser tabs at the same time). Adjust depending on resources.
-headless = True
+headless = False
 scroll_ratio = 100 # scrolling ratio while fetching tweets. adjust between 30 to 200 to optimize tweets fetching.
 
 # ==================== Load City Configuration ====================
