@@ -1,0 +1,21 @@
+{
+  "seoul": {
+    "city_name": "首尔",
+    "metro_keywords": [
+      "지하철",
+      "서울지하철",
+      "seoul metro"
+    ],
+    "geocode": "37.5665,126.9780,25km",
+    "description": "首尔地铁系统，包括地铁、轻轨和城际铁路"
+  },
+  "hongkong": {
+    "city_name": "香港",
+    "metro_keywords": [
+      "港鐵",
+      "Hong Kong MTR",
+      "香港地铁"
+    ],
+    "geocode": "22.3193,114.1694,35km"
+  }
+} 

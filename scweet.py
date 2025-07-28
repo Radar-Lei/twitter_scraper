@@ -81,6 +81,8 @@ class Scweet:
         if self.headless and platform.system() in ["Windows", "Darwin"]:
             logging.info("Using zendriver's headless mode for Windows/macOS")
             config.headless = True
+            
+        config.no_sandbox = True
 
         if self.proxy:
             logging.info(f"setting proxy : {self.proxy['host']}:{self.proxy['port']}")
