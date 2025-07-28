@@ -1,8 +1,5 @@
 """
-Scweet - Twitter Scraping Tool
-Author: Yassine Ait Jeddi (@altimis)
-License: MIT
-Repository: https://github.com/Altimis/scweet
+Da Lei modified
 """
 
 import asyncio
@@ -18,7 +15,7 @@ from typing import Awaitable, Callable, Optional, Union, List
 
 import platform
 
-import zendriver as uc
+import nodriver as uc
 from requests.cookies import create_cookie
 from bs4 import BeautifulSoup
 from pyvirtualdisplay import Display
@@ -74,15 +71,13 @@ class Scweet:
                 self.display = Display(visible=0, size=(1024, 768))
                 self.display.start()
 
-    async def init_zendriver(self):
+    async def init_nodriver(self):
         config = uc.Config()
-        # config.lang = "en-US"
+        config.lang = "en-US"
         # Enable built-in headless mode for Windows and macOS
         if self.headless and platform.system() in ["Windows", "Darwin"]:
-            logging.info("Using zendriver's headless mode for Windows/macOS")
+            logging.info("Using nodriver's headless mode for Windows/macOS")
             config.headless = True
-            
-        config.no_sandbox = True
 
         if self.proxy:
             logging.info(f"setting proxy : {self.proxy['host']}:{self.proxy['port']}")
@@ -258,7 +253,7 @@ class Scweet:
             return None, False, "Locked", None
 
     async def login(self):
-        # await self.init_zendriver()
+        # await self.init_nodriver()
         if self.logged_in:
             return self.main_tab, True, "", self.cookies
         account = {
@@ -423,7 +418,7 @@ class Scweet:
             logging.info(f"Account suspended. Use another one.")
             return {}
         if not self.driver:
-            await self.init_zendriver()
+            await self.init_nodriver()
         if login:
             _, logged_in, reason, _ = await self.login()
             if not logged_in:
@@ -583,7 +578,7 @@ class Scweet:
         and override `since` if it is more recent.
         """
         if not self.driver:
-            await self.init_zendriver()
+            await self.init_nodriver()
 
         if not until:
             until = date.today().strftime("%Y-%m-%d")
@@ -1031,7 +1026,7 @@ class Scweet:
 
     async def aget_user_information(self, handles, login=False):
         if not self.driver:
-            await self.init_zendriver()
+            await self.init_nodriver()
 
         if login:
             _, logged_in, reason, _= await self.login()
@@ -1069,7 +1064,7 @@ class Scweet:
             self.driver = None
 
     async def __aenter__(self):
-        await self.init_zendriver()
+        await self.init_nodriver()
 
     async def __aexit__(self, exc_type, exc, tb):
         await self.close()
